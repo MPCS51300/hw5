@@ -172,7 +172,35 @@ def generate_binop(ast, module, builder, variables):
             builder.call(func, [overflow])
             return result
         elif op == "div":
-            return builder.udiv(lhs, rhs)
+            # if divide by 0
+            with builder.if_then(builder.icmp_signed("==",ir.Constant(ir.IntType(32),0),rhs)):
+                c_str_val = generate_slit("divide by 0!\0")
+                c_str = builder.alloca(c_str_val.type)
+                builder.store(c_str_val, c_str)
+                printf_func = module.get_global("printf")
+                global_fmt = module.get_global("fstr_slit")
+                voidptr_ty = ir.IntType(8).as_pointer()
+                fmt_arg = builder.bitcast(global_fmt, voidptr_ty)
+                builder.call(printf_func, [fmt_arg, c_str])
+                func = module.get_global("exit")
+                builder.call(func, [ir.Constant(ir.IntType(32),0)])
+            lhs64 = builder.sext(lhs, ir.IntType(64))            
+            rhs64 = builder.sext(rhs, ir.IntType(64))            
+            res = builder.sdiv(lhs, rhs)
+            condition1 = builder.icmp_signed(">", res, ir.Constant(ir.IntType(64), 2147483647))
+            condition2 = builder.icmp_signed("<", res, ir.Constant(ir.IntType(64), -2147483648))
+            with builder.if_then(builder.or_(condition1, condition2)):                
+                c_str_val = generate_slit("cint overflows!\0")
+                c_str = builder.alloca(c_str_val.type)
+                builder.store(c_str_val, c_str)
+                printf_func = module.get_global("printf")
+                global_fmt = module.get_global("fstr_slit")
+                voidptr_ty = ir.IntType(8).as_pointer()
+                fmt_arg = builder.bitcast(global_fmt, voidptr_ty)
+                builder.call(printf_func, [fmt_arg, c_str])
+                func = module.get_global("exit")
+                builder.call(func, [ir.Constant(ir.IntType(32),0)])
+            return builder.trunc(res, ir.IntType(32))
     elif "int" in exptype:
         if op == "add":
             return builder.add(lhs, rhs)
@@ -181,7 +209,18 @@ def generate_binop(ast, module, builder, variables):
         elif op == "mul":
             return builder.mul(lhs, rhs)
         elif op == "div":
-            return builder.udiv(lhs, rhs)
+            with builder.if_then(builder.icmp_signed("==",ir.Constant(ir.IntType(32),0),rhs)):
+                c_str_val = generate_slit("divide by 0!\0")
+                c_str = builder.alloca(c_str_val.type)
+                builder.store(c_str_val, c_str)
+                printf_func = module.get_global("printf")
+                global_fmt = module.get_global("fstr_slit")
+                voidptr_ty = ir.IntType(8).as_pointer()
+                fmt_arg = builder.bitcast(global_fmt, voidptr_ty)
+                builder.call(printf_func, [fmt_arg, c_str])
+                func = module.get_global("exit")
+                builder.call(func, [ir.Constant(ir.IntType(32),0)])
+            return builder.sdiv(lhs, rhs)
     elif "float" in exptype:
         if op == "add":
             return builder.fadd(lhs, rhs)
@@ -190,6 +229,18 @@ def generate_binop(ast, module, builder, variables):
         elif op == "mul":
             return builder.fmul(lhs, rhs)
         elif op == "div":
+            # check if divide by 0
+            with builder.if_then(builder.fcmp_ordered("==",ir.Constant(ir.FloatType(),0.0),rhs)):
+                c_str_val = generate_slit("divide by 0!\0")
+                c_str = builder.alloca(c_str_val.type)
+                builder.store(c_str_val, c_str)
+                printf_func = module.get_global("printf")
+                global_fmt = module.get_global("fstr_slit")
+                voidptr_ty = ir.IntType(8).as_pointer()
+                fmt_arg = builder.bitcast(global_fmt, voidptr_ty)
+                builder.call(printf_func, [fmt_arg, c_str])
+                func = module.get_global("exit")
+                builder.call(func, [ir.Constant(ir.IntType(32),0)])
             return builder.fdiv(lhs, rhs)
     elif exptype == "void":
         pass
@@ -206,6 +257,13 @@ def generate_uop(ast, module, builder, variables):
         exp = load_var(builder, exp)
         if "float" in ast["exptype"]:
             return builder.fsub(ir.Constant(generate_type("float"), 0.0), exp)
+        elif "cint" in ast["exptype"]:
+            struct = builder.ssub_with_overflow(ir.Constant(ir.IntType(32),0), exp)
+            result = builder.extract_value(struct, 0)
+            overflow = builder.extract_value(struct, 1)
+            func = module.get_global("isOverflow")
+            builder.call(func, [overflow])
+            return result
         elif  "int" in ast["exptype"]:
             return builder.sub(ir.Constant(generate_type("int"), 0), exp)
 
@@ -354,6 +412,7 @@ def generate_stmt(ast, module, builder, func, variables):
         if value.type.is_pointer:
             value = load_var(builder, value)
             if value.type == ir.FloatType():
+                print("here is float")
                 global_fmt = module.get_global("fstr_float")
                 value = builder.fpext(value, ir.DoubleType(), name='float_double')
             elif value.type == ir.IntType(32):
@@ -483,8 +542,8 @@ def declare_isoverflow(module):
         global_fmt = module.get_global("fstr_slit")
         voidptr_ty = ir.IntType(8).as_pointer()
         fmt_arg = builder.bitcast(global_fmt, voidptr_ty)
-        # Call print Function
         builder.call(printf_func, [fmt_arg, c_str])
+
         exit_func = module.get_global("exit")
         builder.call(exit_func, [ir.Constant(ir.IntType(32),0)])
     # if not overflow
