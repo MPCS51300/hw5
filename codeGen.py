@@ -17,7 +17,9 @@ def get_pointer(builder, pointer):
     return pointer
 
 def generate_type(typ):
-    if typ == "int":
+	if typ == "lit int":
+		return ir.IntType(32)
+    elif typ == "int":
         return ir.IntType(32)
     elif typ == "float":
         return ir.FloatType()
