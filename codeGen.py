@@ -1,6 +1,7 @@
 from llvmlite import ir
 import llvmlite.binding as llvm
 import ctypes
+import sys
 
 def load_var(builder, pointer):
     while pointer.type.is_pointer:
@@ -30,7 +31,9 @@ def generate_type(typ):
     elif typ == "bool":
         return ir.IntType(1)
     elif "ref" in typ:
-        if "int" in typ:
+        if "cint" in typ:
+            return ir.PointerType(ir.IntType(32))
+        elif "int" in typ:
             return ir.PointerType(ir.IntType(32))
         elif "float" in typ:
             return ir.PointerType(ir.FloatType())
@@ -113,6 +116,9 @@ def generate_binop(ast, module, builder, variables):
     op = ast["op"]
     exptype = ast["exptype"]
 
+    if exptype == "cint":
+        ast["lhs"]["exptype"] = "cint"
+        ast["rhs"]["exptype"] = "cint"
     lhs = generate_exp(ast["lhs"], module, builder, variables)
     rhs = generate_exp(ast["rhs"], module, builder, variables)
     # load if it is a pointer
@@ -143,6 +149,30 @@ def generate_binop(ast, module, builder, variables):
                     return builder.fcmp_ordered(">", lhs, rhs)
                 elif op == "eq":
                     return builder.fcmp_ordered("==", lhs, rhs)
+    elif "cint" in exptype:
+        if op == "add":
+            struct = builder.sadd_with_overflow(lhs, rhs)
+            result = builder.extract_value(struct, 0)
+            overflow = builder.extract_value(struct, 1)
+            func = module.get_global("isOverflow")
+            builder.call(func, [overflow])
+            return result
+        elif op == "sub":
+            struct = builder.ssub_with_overflow(lhs, rhs)
+            result = builder.extract_value(struct, 0)
+            overflow = builder.extract_value(struct, 1)
+            func = module.get_global("isOverflow")
+            builder.call(func, [overflow])
+            return result
+        elif op == "mul":
+            struct = builder.smul_with_overflow(lhs, rhs)
+            result = builder.extract_value(struct, 0)
+            overflow = builder.extract_value(struct, 1)
+            func = module.get_global("isOverflow")
+            builder.call(func, [overflow])
+            return result
+        elif op == "div":
+            return builder.udiv(lhs, rhs)
     elif "int" in exptype:
         if op == "add":
             return builder.add(lhs, rhs)
@@ -252,10 +282,19 @@ def generate_exp(ast, module, builder, variables):
     elif name == "uop":
         return generate_uop(ast, module, builder, variables)
     elif name == "lit":
-        return ir.Constant(generate_type(ast["exptype"]), ast["value"])
+        if ast["exptype"] == "cint":
+            if ast["value"] > 2147483647 or ast["value"] < -2147483648:
+                print("cint overflows!")
+                sys.exit(1)
+            else:
+                return ir.Constant(generate_type(ast["exptype"]), ast["value"])
+        else:
+            return ir.Constant(generate_type(ast["exptype"]), ast["value"])
     elif name == "varval":
         return variables[ast["var"]] 
     elif name == "assign":
+        if ast["exptype"] == "cint":
+            ast["exp"]["exptype"] = "cint"
         return generate_assign(ast, module, builder, variables)
     elif name == "funccall":
         return generate_funccall(ast, module, builder, variables)
@@ -285,6 +324,8 @@ def generate_stmt(ast, module, builder, func, variables):
         else:
             builder.ret_void()
     elif name == "vardeclstmt": 
+        if ast["exptype"] == "cint":
+            ast["exp"]["exptype"] = "cint"
         exp = generate_exp(ast["exp"], module, builder, variables)
         variables[ast["vdecl"]["var"]] = builder.alloca(exp.type)
         if "noalias" in ast["vdecl"]["type"]:
@@ -427,10 +468,39 @@ def declare_printf(module):
     global_fmt3.global_constant = True
     global_fmt3.initializer = c_fmt3
 
+def declare_isoverflow(module):
+    bool_ty = ir.IntType(1)
+    check_ty = ir.FunctionType(ir.VoidType(), [ir.IntType(1)], var_arg=False)
+    func = ir.Function(module, check_ty, name="isOverflow")
+    entry = func.append_basic_block("entry")
+    builder = ir.IRBuilder(entry)
+    with builder.if_then(func.args[0]):
+        # if overflow
+        c_str_val = generate_slit("cint overflows!\0")
+        c_str = builder.alloca(c_str_val.type)
+        builder.store(c_str_val, c_str)
+        printf_func = module.get_global("printf")
+        global_fmt = module.get_global("fstr_slit")
+        voidptr_ty = ir.IntType(8).as_pointer()
+        fmt_arg = builder.bitcast(global_fmt, voidptr_ty)
+        # Call print Function
+        builder.call(printf_func, [fmt_arg, c_str])
+        exit_func = module.get_global("exit")
+        builder.call(exit_func, [ir.Constant(ir.IntType(32),0)])
+    # if not overflow
+    builder.ret_void()
+
+def declare_exit(module):
+    int_ty = ir.IntType(32)
+    exit_ty = ir.FunctionType(ir.VoidType(), [int_ty], var_arg=False)
+    exit = ir.Function(module, exit_ty, name="exit")
+
 # The function called by ekcc.py
 def generate_code(ast, undefined_args):
     module = ir.Module(name="prog")
     declare_printf(module)
+    declare_exit(module)
+    declare_isoverflow(module)
     generate_prog(ast, module, undefined_args)
     return module
 

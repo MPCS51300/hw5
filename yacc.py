@@ -493,6 +493,7 @@ def check_violation(node):
                     raise CompilerException("error: ref var initializer must be a variable.")
                 elif node["vdecl"]["type"][0:3] == "ref" and node["exp"]["name"] != "varval":
                     raise CompilerException("error: ref var initializer must be a variable.")
+                node["exptype"] = node["vdecl"]["type"]
 
             #Check: all functions must be declared before use
             elif node["name"] == "funccall":
