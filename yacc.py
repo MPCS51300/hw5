@@ -424,14 +424,14 @@ def not_same_type(left_type, right_type):
     rtype = right_type.split()[-1]
     if ltype == "cint":
         if rtype == "cint" or right_type == "lit int":
-            return false
+            return False
         else:
-            return true
+            return True
     elif rtype == "cint":
         if left_type == "lit int":
-            return false
+            return False
         else:
-            return true
+            return True
     else:    
         return ltype != rtype
 
