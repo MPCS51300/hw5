@@ -116,9 +116,6 @@ def generate_binop(ast, module, builder, variables):
     op = ast["op"]
     exptype = ast["exptype"]
 
-    if exptype == "cint":
-        ast["lhs"]["exptype"] = "cint"
-        ast["rhs"]["exptype"] = "cint"
     lhs = generate_exp(ast["lhs"], module, builder, variables)
     rhs = generate_exp(ast["rhs"], module, builder, variables)
     # load if it is a pointer
@@ -184,12 +181,12 @@ def generate_binop(ast, module, builder, variables):
                 builder.call(printf_func, [fmt_arg, c_str])
                 func = module.get_global("exit")
                 builder.call(func, [ir.Constant(ir.IntType(32),0)])
-            lhs64 = builder.sext(lhs, ir.IntType(64))            
-            rhs64 = builder.sext(rhs, ir.IntType(64))            
-            res = builder.sdiv(lhs, rhs)
-            condition1 = builder.icmp_signed(">", res, ir.Constant(ir.IntType(64), 2147483647))
-            condition2 = builder.icmp_signed("<", res, ir.Constant(ir.IntType(64), -2147483648))
-            with builder.if_then(builder.or_(condition1, condition2)):                
+            # lhs64 = builder.sext(lhs, ir.IntType(64))            
+            # rhs64 = builder.sext(rhs, ir.IntType(64))            
+            # res = builder.sdiv(lhs, rhs)
+            condition1 = builder.icmp_signed("==", lhs, ir.Constant(ir.IntType(32), -2147483648))
+            condition2 = builder.icmp_signed("==", rhs, ir.Constant(ir.IntType(32), -1))
+            with builder.if_then(builder.and_(condition1, condition2)):                
                 c_str_val = generate_slit("cint overflows!\0")
                 c_str = builder.alloca(c_str_val.type)
                 builder.store(c_str_val, c_str)
@@ -200,7 +197,7 @@ def generate_binop(ast, module, builder, variables):
                 builder.call(printf_func, [fmt_arg, c_str])
                 func = module.get_global("exit")
                 builder.call(func, [ir.Constant(ir.IntType(32),0)])
-            return builder.trunc(res, ir.IntType(32))
+            return builder.sdiv(lhs, rhs)
     elif "int" in exptype:
         if op == "add":
             return builder.add(lhs, rhs)
@@ -294,17 +291,10 @@ def generate_assign(ast, module, builder, variables):
     # if exp.type.is_pointer:
     #     exp = builder.load(exp)
     exp = load_var(builder, exp)
-    # if ast["var"] == "$d":
-    #     print("exp: ", exp, ";exp type: ", exp.type)
-    #     print("var?:", ast["var"], "; variables[ast['var']]:", variables[ast["var"]], "; type?:", variables[ast["var"]].type)
     builder.store(exp, variables[ast["var"]])
     return variables[ast["var"]]
 
 def generate_funccall(ast, module, builder, variables):
-    # if ast["globid"] == "fib":
-    #     for k,v in variables.items():
-    #         print(k," : ",v)
-
     fn = module.get_global(ast["globid"])
     args = []
     if "params" not in ast or "exps" not in ast["params"]:
@@ -351,8 +341,6 @@ def generate_exp(ast, module, builder, variables):
     elif name == "varval":
         return variables[ast["var"]] 
     elif name == "assign":
-        if ast["exptype"] == "cint":
-            ast["exp"]["exptype"] = "cint"
         return generate_assign(ast, module, builder, variables)
     elif name == "funccall":
         return generate_funccall(ast, module, builder, variables)
@@ -382,8 +370,6 @@ def generate_stmt(ast, module, builder, func, variables):
         else:
             builder.ret_void()
     elif name == "vardeclstmt": 
-        if ast["exptype"] == "cint":
-            ast["exp"]["exptype"] = "cint"
         exp = generate_exp(ast["exp"], module, builder, variables)
         variables[ast["vdecl"]["var"]] = builder.alloca(exp.type)
         if "noalias" in ast["vdecl"]["type"]:
